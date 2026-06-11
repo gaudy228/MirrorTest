@@ -6,6 +6,7 @@ public class Bullet : NetworkBehaviour
     [SerializeField] int damage = 35;
 
     public GameObject owner;
+    private Player ownerPlayer;
     Rigidbody2D rb;
 
     void Awake()
@@ -16,6 +17,7 @@ public class Bullet : NetworkBehaviour
     public void Initialize(Vector2 direction, float force, GameObject ownerObject)
     {
         owner = ownerObject;
+        ownerPlayer = owner.GetComponent<Player>();
 
         if (rb != null)
         {
@@ -40,7 +42,10 @@ public class Bullet : NetworkBehaviour
 
         if (other.TryGetComponent(out Player player))
         {
-            player.TakeDamage(damage);
+            if(player.GetTeam() != ownerPlayer.GetTeam())
+            {
+                player.TakeDamage(damage);
+            }
         }
         if (isServer)
         {

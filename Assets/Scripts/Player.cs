@@ -13,7 +13,19 @@ public class Player : NetworkBehaviour
     [SerializeField] float fireRate = 0.5f;
     [SerializeField] float bulletForce = 20f;
 
+    private MyNet MyNet;
+    private MatchManager MatchManager;
     float nextFireTime;
+
+    [SyncVar(hook = nameof(OnTeamChanged))]
+    TeamType teamType = TeamType.None;
+
+    SpriteRenderer spriteRenderer;
+
+    void Awake()
+    {
+        spriteRenderer = GetComponent<SpriteRenderer>();
+    }
 
     void Start()
     {
@@ -44,6 +56,54 @@ public class Player : NetworkBehaviour
         }
     }
 
+    public void Init(MyNet myNet, MatchManager matchManager)
+    {
+        MyNet = myNet;
+        MatchManager = matchManager;
+    }
+
+    void OnTeamChanged(TeamType oldValue, TeamType newValue)
+    {
+        UpdateTeam(newValue);
+    }
+
+    [Server]
+    public void SetTeam(TeamType team)
+    {
+        teamType = team;
+    }
+
+    public TeamType GetTeam()
+    {
+        return teamType;
+    }
+
+    public int GetHealth()
+    {
+        return health;
+    }
+
+    private void UpdateTeam(TeamType team)
+    {
+        if (spriteRenderer == null)
+        {
+            spriteRenderer = GetComponent<SpriteRenderer>();
+            if (spriteRenderer == null)
+            {
+                return;
+            }
+        }
+
+        if (team == TeamType.Red)
+        {
+            spriteRenderer.color = Color.red;
+        }
+        else if (team == TeamType.Green)
+        {
+            spriteRenderer.color = Color.green;
+        }
+    }
+
     public void TakeDamage(int damage)
     {
         if (isServer)
@@ -52,7 +112,12 @@ public class Player : NetworkBehaviour
             if (health <= 0)
             {
                 health = 0;
+                gameObject.SetActive(false);
                 RpcDie();
+                if (MatchManager != null)
+                {
+                    MatchManager.CheckRoundEnd();
+                }
             }
         }
         else
@@ -70,6 +135,12 @@ public class Player : NetworkBehaviour
             if (health <= 0)
             {
                 health = 0;
+                gameObject.SetActive(false);
+
+                if (MatchManager != null)
+                {
+                    MatchManager.CheckRoundEnd();
+                }
             }
         }
     }
@@ -77,33 +148,80 @@ public class Player : NetworkBehaviour
     [ClientRpc]
     void RpcDie()
     {
-        gameObject.SetActive(false);
-        Invoke(nameof(Respawn), 3f);
-    }
-
-    void Respawn()
-    {
-        if (isServer)
+        if (this == null || gameObject == null)
         {
-            RpcRespawn();
+            return;
+        }
+
+        gameObject.SetActive(false);
+
+        if (spriteRenderer != null)
+        {
+            spriteRenderer.enabled = false;
         }
     }
 
-    [ClientRpc]
-    void RpcRespawn()
+    [Server]
+    public void Respawn()
     {
+        if (!isServer)
+        {
+            return;
+        }
+
         health = 100;
+
+        Transform spawnPoint = null;
+        if (MyNet != null)
+        {
+            spawnPoint = MyNet.GetSpawnPoint(teamType);
+        }
+
+        if (spawnPoint != null)
+        {
+            transform.position = spawnPoint.position;
+        }
+
         gameObject.SetActive(true);
-        transform.position = Vector2.zero;
+
+        RpcRespawn(spawnPoint != null ? spawnPoint.position : Vector3.zero);
+    }
+
+    [ClientRpc]
+    void RpcRespawn(Vector3 position)
+    {
+        if (this == null)
+        {
+            return;
+        }
+
+        if (gameObject == null)
+        {
+            return;
+        }
+
+        transform.position = position;
+
+        health = 100;
+
+        gameObject.SetActive(true);
+
+        if (spriteRenderer != null)
+        {
+            spriteRenderer.enabled = true;
+            UpdateTeam(teamType);
+        }
+
         if (HpBar != null)
         {
-            OnHealthChanged(health, health);
+            HpBar.value = 1f;
+            OnHealthChanged(100, 100);
         }
     }
 
     void OnHealthChanged(int oldValue, int newValue)
     {
-        if (HpBar != null)
+        if (HpBar != null && this != null && gameObject != null)
         {
             HpBar.value = (float)newValue / 100f;
         }
@@ -112,6 +230,11 @@ public class Player : NetworkBehaviour
     [Command]
     void CmdShoot(Vector2 direction)
     {
+        if (bulletPrefab == null)
+        {
+            return;
+        }
+
         GameObject bullet = Instantiate(bulletPrefab, transform.position, Quaternion.identity);
 
         Bullet bulletScript = bullet.GetComponent<Bullet>();
@@ -121,7 +244,13 @@ public class Player : NetworkBehaviour
         }
 
         NetworkServer.Spawn(bullet);
-
         Destroy(bullet, 3f);
     }
+}
+
+public enum TeamType
+{
+    Red,
+    Green,
+    None
 }
